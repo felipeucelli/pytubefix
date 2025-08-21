@@ -479,7 +479,7 @@ class StreamerContext:
             StreamerContextUpdate.encode(v, writer.uint32(42).fork()).join()
 
         writer.uint32(50).fork()
-        for v in message.get("field6", []):
+        for v in message.get("unsentSabrContexts", []):
             writer.int32(v)
         writer.join()
 

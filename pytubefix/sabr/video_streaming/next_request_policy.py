@@ -38,7 +38,7 @@ class NextRequestPolicy:
     def decode(data, length=None):
         reader = data if isinstance(data, BinaryReader) else BinaryReader(data)
         end = reader.len if length is None else reader.pos + length
-        message = NextRequestPolicy
+        message = NextRequestPolicy()
 
         while reader.pos < end:
             tag = reader.uint32()

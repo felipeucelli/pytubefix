@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 from pytubefix.sabr.core.UMP import UMP
 from pytubefix.monostate import Monostate
 from pytubefix.exceptions import SABRError
+from pytubefix.sabr.video_streaming.sabr_context_sending_policy import SabrContextSendingPolicy
 from pytubefix.sabr.video_streaming.sabr_error import SabrError
 from pytubefix.sabr.video_streaming.media_header import MediaHeader
 from pytubefix.sabr.core.chunked_data_buffer import ChunkedDataBuffer
@@ -99,8 +100,9 @@ class ServerAbrStream:
         self.RELOAD = False
         self.maximum_reload_attempt = 4
         self.stream_protection_status = PoTokenStatus.UNKNOWN.name
-        self.sabr_contexts_to_send = []
+        self.sabr_contexts_to_send: set[int] = set()
         self.sabr_context_updates = dict()
+        self.active_delay = False
 
     def emit(self, data):
         for formatId in data['initialized_formats']:
@@ -128,8 +130,8 @@ class ServerAbrStream:
             'playerTimeMs': 0,
             'visibility': 0,
             'drcEnabled': self.stream.is_drc,
-            # 0 = BOTH, 1 = AUDIO (video-only is no longer supported by YouTube)
-            'enabledTrackTypesBitfield': 0 if video_format else 1
+            # 0 - video & audio, 1 - audio only, 2 - video only
+            'enabledTrackTypesBitfield': 2 if video_format else 1
         }
         while client_abr_state['playerTimeMs'] < self.totalDurationMs:
             data = self.fetch_media(client_abr_state, audio_format, video_format)
@@ -202,7 +204,10 @@ class ServerAbrStream:
                     ctx
                     for ctx in self.sabr_context_updates.values() if ctx["type"] in self.sabr_contexts_to_send
                 ],
-                'field6': [],
+                'unsentSabrContexts': [
+                    context_type for context_type in self.sabr_contexts_to_send
+                    if context_type not in self.sabr_context_updates
+                ],
                 'poToken': self.base64_to_u8(self.po_token) if self.po_token else None,
                 'playbackCookie': PlaybackCookie.encode(
                     self.playback_cookie).finish() if self.playback_cookie else None,
@@ -281,9 +286,11 @@ class ServerAbrStream:
                 sabr_context_update = True
                 self.process_sabr_context_update(data)
 
-            elif part["type"] == PART.SNACKBAR_MESSAGE.value:  # This forces you to wait for the time to be able to skip the ad.
-                sabr_context_update = True
-                self.process_snackbar_message()
+            elif part['type'] == PART.SABR_CONTEXT_SENDING_POLICY.value:
+                self.process_sabr_context_sending_policy(data)
+
+            elif part["type"] == PART.SNACKBAR_MESSAGE.value:
+                pass
 
         ump.parse(callback)
 
@@ -356,6 +363,17 @@ class ServerAbrStream:
         next_request_policy = NextRequestPolicy.decode(data)
         self.playback_cookie = next_request_policy.playbackCookie
 
+        if next_request_policy.backoffTimeMs and self.active_delay:
+            backoff_time_ms = next_request_policy.backoffTimeMs / 1000
+            if backoff_time_ms >= 60:
+                raise SABRError("SABR The maximum time to skip the ad (1 minute) has been exceeded.")
+
+            logger.warning(f"SABR YouTube is forcing ads, wait {backoff_time_ms} seconds to skip")
+
+            sleep(backoff_time_ms)
+
+            self.active_delay = False
+
     def process_format_initialization(self, data):
         format_metadata = FormatInitializationMetadata.decode(data)
         self.register_format(format_metadata)
@@ -366,17 +384,6 @@ class ServerAbrStream:
             raise ValueError("Invalid SABR redirect")
         self.server_abr_streaming_url = sabr_redirect.url
         return sabr_redirect
-
-    def process_snackbar_message(self):
-        skip = self.sabr_context_updates[self.sabr_contexts_to_send[-1]].get("skip", 1000) / 1000
-
-        if skip >= 60:
-            raise SABRError("SABR The maximum time to skip the ad (1 minute) has been exceeded.")
-
-        logger.warning(f"SABR YouTube is forcing ads, wait {skip} seconds to skip")
-
-        sleep(skip)
-        self.maximum_reload_attempt -= 1
 
     # Reference https://github.com/coletdjnz/yt-dlp-dev/blob/5c0c296/yt_dlp/extractor/youtube/_streaming/sabr/stream.py
     def process_stream_protection_status(self, data):
@@ -423,12 +430,33 @@ class ServerAbrStream:
         self.sabr_context_updates[sabr_ctx_update["type"]]["timestamp"] = timestamp
         self.sabr_context_updates[sabr_ctx_update["type"]]["skip"] = skip
 
+        if skip > 0:
+            self.active_delay = True
+
         if sabr_ctx_update["sendByDefault"] is True:
-            self.sabr_contexts_to_send.append(sabr_ctx_update["type"])
+            self.sabr_contexts_to_send.add(sabr_ctx_update["type"])
 
         logger.debug(f'Registered SabrContextUpdate')
         logger.debug(f"Current timestamp: {timestamp}")
         logger.debug(f"Please wait for {skip} milliseconds")
+
+    # Reference https://github.com/coletdjnz/yt-dlp-dev/blob/5c0c296/yt_dlp/extractor/youtube/_streaming/sabr/stream.py
+    def process_sabr_context_sending_policy(self, data):
+        sabr_context_sending_policy = SabrContextSendingPolicy.decode(data)
+        for start_type in sabr_context_sending_policy['startPolicy']:
+            if start_type not in self.sabr_context_updates:
+                logger.debug(f'Server requested to enable SABR Context Update for type {start_type}')
+                self.sabr_contexts_to_send.add(start_type)
+
+        for stop_type in sabr_context_sending_policy['stop_policy']:
+            if stop_type in self.sabr_contexts_to_send:
+                logger.debug(f'Server requested to disable SABR Context Update for type {stop_type}')
+                self.sabr_contexts_to_send.remove(stop_type)
+
+        for discard_type in sabr_context_sending_policy['discard_policy']:
+            if discard_type in self.sabr_context_updates:
+                logger.debug(f'Server requested to discard SABR Context Update for type {discard_type}')
+                self.sabr_context_updates.pop(discard_type, None)
 
     @staticmethod
     def get_format_key(format_id) -> str:
@@ -469,7 +497,7 @@ class ServerAbrStream:
         self.maximum_reload_attempt -= 1
 
         # ContextUpdate is bound to server url
-        self.sabr_contexts_to_send = []
+        self.sabr_contexts_to_send: set[int] = set()
         self.sabr_context_updates = dict()
 
         self.youtube.vid_info = None
