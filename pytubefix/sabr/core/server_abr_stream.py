@@ -12,7 +12,6 @@ from urllib.request import Request, urlopen
 from pytubefix.sabr.core.UMP import UMP
 from pytubefix.monostate import Monostate
 from pytubefix.exceptions import SABRError
-from pytubefix.sabr.video_streaming.sabr_context_sending_policy import SabrContextSendingPolicy
 from pytubefix.sabr.video_streaming.sabr_error import SabrError
 from pytubefix.sabr.video_streaming.media_header import MediaHeader
 from pytubefix.sabr.core.chunked_data_buffer import ChunkedDataBuffer
@@ -22,6 +21,7 @@ from pytubefix.sabr.video_streaming.next_request_policy import NextRequestPolicy
 from pytubefix.sabr.video_streaming.streamer_context import StreamerContextUpdate
 from pytubefix.sabr.video_streaming.stream_protection_status import StreamProtectionStatus
 from pytubefix.sabr.video_streaming.video_playback_abr_request import VideoPlaybackAbrRequest
+from pytubefix.sabr.video_streaming.sabr_context_sending_policy import SabrContextSendingPolicy
 from pytubefix.sabr.video_streaming.format_initialization_metadata import FormatInitializationMetadata
 
 logger = logging.getLogger(__name__)
@@ -141,6 +141,12 @@ class ServerAbrStream:
                 self.reload()
 
             self.emit(data)
+
+            if data.get("sabr_redirect"):
+                if self.maximum_reload_attempt > 0:
+                    continue
+                else:
+                    raise SABRError("SABR failed to redirect after exhausting reload attempts")
 
             if data.get("sabr_context_update"):
                 if self.maximum_reload_attempt > 0:
