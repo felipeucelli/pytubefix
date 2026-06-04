@@ -75,5 +75,20 @@ def test_videos_html(request_get, channel_videos_html):
     c = Channel('https://www.youtube.com/c/ProgrammingKnowledge')
     assert c.html == channel_videos_html
 
+
+@mock.patch('pytubefix.contrib.playlist.install_proxy')
+@mock.patch('pytubefix.request.get')
+def test_channel_proxies_are_installed(request_get, install_proxy_mock,
+                                       channel_videos_html):
+    request_get.return_value = channel_videos_html
+    proxies = {
+        'http': 'http://user:pass@proxy.example.com:8080',
+        'https': 'http://user:pass@proxy.example.com:8080',
+    }
+    Channel('https://www.youtube.com/c/ProgrammingKnowledge/videos',
+            proxies=proxies)
+    install_proxy_mock.assert_called_once_with(proxies)
+
+
 # Because the Channel object subclasses the Playlist object, most of the tests
 # are already taken care of by the Playlist test suite.

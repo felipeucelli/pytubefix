@@ -48,11 +48,21 @@ class Channel(Playlist):
             then passed as a `po_token` query parameter to affected clients.
             If allow_oauth_cache is set to True, the user should only be prompted once.
         :param Callable po_token_verifier:
-            (Optional) Verified used to obtain the visitorData and po_token.
+            (Optional) Verifier used to obtain the visitorData and po_token.
             The verifier will return the visitorData and po_token respectively.
             (if passed, else default verifier will be used)
         """
-        super().__init__(url, proxies)
+        super().__init__(
+            url,
+            client=client,
+            proxies=proxies,
+            use_oauth=use_oauth,
+            allow_oauth_cache=allow_oauth_cache,
+            token_file=token_file,
+            oauth_verifier=oauth_verifier,
+            use_po_token=use_po_token,
+            po_token_verifier=po_token_verifier,
+        )
 
         self.channel_uri = extract.channel_name(url)
 
@@ -207,13 +217,32 @@ class Channel(Playlist):
 
         :Yields: Video URLs
         """
+        for obj in self._object_generator():
+            if isinstance(obj, str):
+                yield self._video_url(obj) if obj.startswith("/watch") else obj
+                continue
+
+            watch_url = getattr(obj, "watch_url", None)
+            if watch_url:
+                yield watch_url
+
+    def _object_generator(self):
+        """Generator that yields extracted channel objects."""
         for page in self._paginate(self.html):
             for obj in page:
-                yield obj
+                yield from self._iter_extracted_objects(obj)
+
+    @staticmethod
+    def _iter_extracted_objects(obj):
+        """Flatten extracted channel objects."""
+        if isinstance(obj, list):
+            for item in obj:
+                yield from Channel._iter_extracted_objects(item)
+        elif obj:
+            yield obj
 
     def videos_generator(self):
-        for url in self.video_urls:
-            yield url
+        yield from self._object_generator()
 
     def _get_active_tab(self, initial_data) -> dict:
         """ Receive the raw json and return the active page.
@@ -351,7 +380,7 @@ class Channel(Playlist):
         """
         try:
             return YouTube(f"/watch?v="
-                           f"{x['richItemRenderer']['content']['videoRenderer']['videoId']}",
+                           f"{x['richItemRenderer']['content']['lockupViewModel']['contentId']}",
                            client=self.client,
                            use_oauth=self.use_oauth,
                            allow_oauth_cache=self.allow_oauth_cache,
