@@ -2,11 +2,13 @@
 
 set -e
 
-VERSION=9
-MINOR=1
-PATCH=2
+VERSION=10
+MINOR=9
+PATCH=0
 EXTRAVERSION=""
-NOTES="(#497)"
+COMMIT="(#644 #645 #646)
+
+"
 BRANCH="main"
 
 if [[ -z $PATCH ]]; then
@@ -27,7 +29,7 @@ else
 fi
 
 git add .
-git commit -m "$FULL_VERSION $NOTES"
+git commit -s -m "$FULL_VERSION $COMMIT"
 git push -u origin $BRANCH
 git tag v$FULL_VERSION
 git push --tags

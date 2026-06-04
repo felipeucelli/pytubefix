@@ -16,6 +16,8 @@ class PytubeFixError(Exception):
 
 class MaxRetriesExceeded(PytubeFixError):
     """Maximum number of retries exceeded."""
+    def __init__(self):
+        super().__init__("Maximum number of retries exceeded")
 
 
 class HTMLParseError(PytubeFixError):
@@ -25,6 +27,14 @@ class HTMLParseError(PytubeFixError):
 class ExtractError(PytubeFixError):
     """Data extraction based exception."""
 
+class SABRError(PytubeFixError):
+    def __init__(self, msg: str):
+        self.msg = msg
+        super().__init__(self.msg)
+
+    @property
+    def error_string(self):
+        return self.msg
 
 class RegexMatchError(ExtractError):
     """Regex pattern did not return any matches."""
@@ -45,13 +55,14 @@ class RegexMatchError(ExtractError):
 
 
 class InterpretationError(PytubeFixError):
-    def __init__(self, js_url: str):
+    def __init__(self, js_url: str, reason=None):
         self.js_url = js_url
+        self.reason = reason
         super().__init__(self.error_string)
 
     @property
     def error_string(self):
-        return f'Error interpreting player js: {self.js_url}'
+        return f'Error interpreting player js: {self.js_url}' + f' reason: {self.reason}' if self.reason else ''
 
 ### Video Unavailable Errors ###
 # There are really 3 types of errors thrown
@@ -83,7 +94,118 @@ class VideoUnavailable(PytubeFixError):
     def error_string(self):
         return f'{self.video_id} is unavailable'
 
+
+
+
 ## 2. Known Error Type, Extra info useful for user ##
+
+class VideoRemovedByYouTubeForViolatingTOS(VideoUnavailable):
+    """Raised when a video has been removed for violating YouTube's Community Guidelines or Terms of Service."""
+
+    def __init__(self, video_id: str, reason: str = None):
+        """
+        :param str video_id:
+            A YouTube video identifier.
+        :param str reason:
+            Optional reason text from YouTube.
+        """
+        self.video_id = video_id
+        self.reason = reason or "This video has been removed for violating YouTube's Community Guidelines."
+        super().__init__(self.video_id)
+
+    @property
+    def error_string(self):
+        return f"{self.video_id} {self.reason}"
+
+
+
+
+class LiveStreamEnded(VideoUnavailable):
+    """Raised when the live event has already ended."""
+
+    def __init__(self, video_id: str, reason: str = None):
+        """
+        :param str video_id:
+            A YouTube video identifier.
+        :param str reason:
+            Reason for the error, defaults to a standard message.
+        """
+        self.video_id = video_id
+        self.reason = reason or "This live event has ended."
+        super().__init__(self.video_id)
+
+    @property
+    def error_string(self):
+        return f'{self.video_id} {self.reason}'
+
+
+
+
+class VideoBlockedByCopyright(VideoUnavailable):
+    """Raised when a video is blocked in the user's country on copyright grounds."""
+
+    def __init__(self, video_id: str, reason: str = None):
+        """
+        :param str video_id:
+            A YouTube video identifier.
+        :param str reason:
+            The reason for the error (optional).
+        """
+        self.video_id = video_id
+        self.reason = reason or "This video contains content that is blocked in your country on copyright grounds."
+        super().__init__(self.video_id)
+
+    @property
+    def error_string(self):
+        return f'{self.video_id} {self.reason}'
+
+
+
+
+class VideoRemovedByUploader(VideoUnavailable):
+    """Raised when a video has been removed by the uploader."""
+
+    def __init__(self, video_id: str, reason: str = None):
+        """
+        :param str video_id:
+            A YouTube video identifier.
+        :param str reason:
+            The reason for the error (optional).
+        """
+        self.video_id = video_id
+        self.reason = reason or "This video has been removed by the uploader"
+        super().__init__(self.video_id)
+
+    @property
+    def error_string(self):
+        return f'{self.video_id} {self.reason}'
+
+
+
+
+
+class AccountTerminated(VideoUnavailable):
+    """Raised when the YouTube account associated with a video has been terminated."""
+
+    def __init__(self, video_id: str, reason: str = None):
+        """
+        :param str video_id:
+            A YouTube video identifier.
+        :param str reason:
+            The reason for the error (optional).
+        """
+        self.video_id = video_id
+        self.reason = reason or (
+            "This video is no longer available because the YouTube account "
+            "associated with this video has been terminated."
+        )
+        super().__init__(self.video_id)
+
+    @property
+    def error_string(self):
+        return f'{self.video_id} {self.reason}'
+
+
 
 class VideoPrivate(VideoUnavailable):
     def __init__(self, video_id: str):
@@ -145,8 +267,9 @@ class BotDetection(VideoUnavailable):
     @property
     def error_string(self):
         return (
-            f'{self.video_id} This request was detected as a bot. Use `use_po_token=True` or switch to WEB client to view. '
-            f'See more details at https://github.com/JuanBindez/pytubefix/pull/209')
+            f'{self.video_id} This request was detected as a bot.'
+            f' DO NOT OPEN AN ISSUE! '
+            f'See more details at https://pytubefix.readthedocs.io/en/latest/user/po_token.html')
 
 
 class PoTokenRequired(VideoUnavailable):
@@ -165,7 +288,7 @@ class PoTokenRequired(VideoUnavailable):
     def error_string(self):
         return (
             f'{self.video_id} The {self.client_name} client requires PoToken to obtain functional streams, '
-            f'See more details at https://github.com/JuanBindez/pytubefix/pull/209')
+            f'See more details at https://pytubefix.readthedocs.io/en/latest/user/po_token.html')
 
 
 class LoginRequired(VideoUnavailable):

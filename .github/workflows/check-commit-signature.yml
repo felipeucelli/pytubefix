@@ -1,0 +1,34 @@
+name: Check Commit Signature
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  check-signature:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Validate Commit Message
+        run: |
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          
+          echo "Analyzing commit message..."
+          echo "---------------------------"
+          echo "$COMMIT_MSG"
+          echo "---------------------------"
+
+          # Check for mandatory Signed-off-by (DCO)
+          if ! echo "$COMMIT_MSG" | grep -qE "Signed-off-by: .+ <.+>"; then
+            echo "❌ Error: Mandatory signature missing."
+            echo "You must sign off your commit with 'Signed-off-by: Your Name <email>'."
+            echo "Use 'git commit -s' to automate this or amend your current commit."
+            exit 1
+          fi
+
+          echo "✅ Signature found. Commit accepted."
